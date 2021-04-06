@@ -3,7 +3,7 @@
 #################################################################################
 # Enabling Raspberry Pi to run SmartThings direct-connected device applications
 #                Master setup and configure bash script
-#                           Version 0.20201217
+#                           Version 0.20210406
 #
 # Copyright 2020 Todd A. Austin
 #
@@ -22,6 +22,7 @@
 #################################################################################
 
 # Global static variables
+VERSION=".20210406"
 rpimodel=""
 osrelease=0
 startdir=""
@@ -35,7 +36,7 @@ onbjsonfile="$sdkpkgdir/example/onboarding_config.json"
 todo="[to-do]"
 done="[done]"
 
-modellist=("a02082" "a22082" "a32082" "a020d3" "a03111" "b03111" "c03111" "b03112" "c03111" "c03112")
+modellist=("a02082" "a22082" "a32082" "a020d3" "a03111" "b03111" "c03111" "b03112" "c03111" "c03112" "9000c1")
 
 initstepst=("$todo" "$todo" "$todo" "$todo" "$todo" "$todo" "$todo" "$todo")
 stepst=()
@@ -72,10 +73,10 @@ showmenu() {
  echo -e "\t======================================================="
  echo -e "\t 1. Install Pi enablement package \t\t${dispstepst[0]}"
  echo -e "\t 2. Install software dependencies \t\t${dispstepst[1]}"
- echo -e "\t 3. Clone Core SDK \t\t\t\t${dispstepst[2]}"
+ echo -e "\t 3. Install Core SDK \t\t\t\t${dispstepst[2]}"
  echo -e "\t 4. Build Core SDK \t\t\t\t${dispstepst[3]}"
  echo -e "\t 5. Register devices in Developer Workspace \t${dispstepst[4]}"
- echo -e "\t 6. Build Example App \t\t\t\t${dispstepst[5]}"
+ echo -e "\t 6. Build example device app \t\t\t${dispstepst[5]}"
  echo -e "\t 7. Configure Pi for SoftAP \t\t\t${dispstepst[6]}"
  echo -e "\t 8. On-board example device app\t\t\t${dispstepst[7]}"
  echo -e "\t======================================================="
@@ -114,7 +115,7 @@ getyesno() {
   read -rsn1 keyin
  done
 
- echo
+ echo -e "$keyin\n"
  keyresp=$keyin
 
 }
@@ -154,7 +155,7 @@ getjsonitem() {
   else
     return 1
   fi
-    
+
 }
 
 # Execute git clone for given package URL
@@ -162,28 +163,36 @@ clonepkg() {
 
   step=$1
   URL=$2
+  
+  savIFS=$IFS
+  IFS='/'
+  read -a path <<< "$URL"
+
+  IFS='.'
+  read -a dname <<< "${path[4]}"
+  IFS=$savIFS
+  PKGDIR=$HOME/${dname[0]}
 
   cd "$HOME"
   output=$(git clone "$URL" 2>&1)
   errnum=$?
-  cd "$rpipkgdir"
-  
+
   if [ $errnum -eq 0 ]
     then
-      
+
       # Confirm that the respository directory now exists
 
-      savIFS=$IFS
-      IFS='/'
-      read -a path <<< "$URL"
-
-      IFS='.'
-      read -a dname <<< "${path[4]}"
-      IFS=$savIFS
-
-      if [ -d $HOME/${dname[0]} ]; then
+      if [ -d $PKGDIR ]; then
         echo -e "\n\t\e[92mInstallation successful\e[0m\n"
         stepst[step]=$done
+        
+        if [ $step -eq 0 ]; then
+          cd $PKGDIR
+          echo -e "\n\n\e[96mPLEASE RESTART mastersetup NOW (./mastersetup)\e[0m\n"
+          updatestatfile
+          exit 0
+        fi
+        
       else
         echo -e "\n\t\e[91mSomething went wrong: path to package not found\e[0m\n"
       fi
@@ -191,8 +200,39 @@ clonepkg() {
     else
       if [[ "$output" == *"already exists"* ]]
         then
-          echo -e "\t\e[0m  >> It looks like the package is already installed\n"
           stepst[step]=$done
+        
+          echo -e "\t\e[0m  >> It looks like the package is already installed\n"
+          echo -en "\t\e[96m  >> Do you want to pull the latest available files? (y/n): \e[0m"
+          getyesno
+          echo
+
+          if [ $keyresp == "y" ]; then
+
+            cd $PKGDIR
+            
+            if [[ "$URL" =~ "st-device-sdk-c" ]]; then
+              output=$(git pull origin master)
+            else
+              output=$(git pull origin main)
+            fi
+            
+            echo $output
+            errnum=$?
+
+            if [ $errnum -eq 0 ]; then
+              if [ $step -eq 0 ]; then
+              
+                if [[ "$output" =~ "mastersetup" ]]; then
+                  echo -e "\n\n\e[96mPLEASE RESTART mastersetup NOW (./mastersetup)\e[0m\n"
+                  exit 0
+                fi
+              fi
+            else
+              echo -e "\n\t\e[91mgit reported error number: $errnum\n"
+            fi
+          fi
+
         else
           echo -e "\n\t\e[91mgit reported error number: $errnum\n"
           echo -e "\t$output\e[0m\n"
@@ -328,7 +368,7 @@ step2() {
 
   bash $rpipkgdir/installSDKdeps
 
-  echo -ne "\n\n\t\e[95mDid you encounter any errors or additional dependencies? (\e[1my/n\e[22m)"
+  echo -ne "\n\n\t\e[95mDid you encounter any errors or additional dependencies? (\e[1my/n\e[0m) "
   getyesno
 
   if [ $keyresp == "y" ]
@@ -506,8 +546,7 @@ step6() {
   
   if [ $errnum == 0 ]; then
   
-    echo -en "\n\t\e[93mNote: Deprecated warnings are normal!\e[0m"
-    echo -en "\n\t\e[95mDid you see any errors (\e[1my/n\e[22m)? \e[0m"
+    echo -en "\n\t\e[95mDid you have any errors (\e[1my/n\e[22m)? \e[0m"
     getyesno
     
     if [ "$keyresp" == "n" ]; then
@@ -557,11 +596,9 @@ step7() {
 # Onboard the example device
 step8() {
   
-  echo -e "\n\t\e[97mPrepare to onboard your device\e[0m"
-  echo -e "\n\tOpen the SmartThings mobile app and begin the add-device"
-  echo -e "\tprocess for your test device."
-  echo -e "\n\t\e[95mPress any key when you've found your Developer Mode"
-  echo -en "\ttest device and are ready to proceed "
+  echo -e "\n\t\e[97mPrepare to onboard your device!\e[0m"
+  echo -e "\n\tOpen the SmartThings mobile app and begin the 'Add Device' process"
+  echo -en "\n\t\e[95mPress any key once you have tapped 'Scan QR code'"
   read -rsn1 keyin
   echo 
   
@@ -617,6 +654,7 @@ fi
 
 echo -e "\n\t\e[97mInstall and configure Raspberry Pi support for"
 echo -e "\tSamsung SmartThings direct-connected device applications\e[0m"
+echo -e "\tVersion $VERSION"
 
 echo -e "\n\t\e[4mCHECKING YOUR SYSTEM:\e[0m"
 
@@ -624,6 +662,28 @@ echo -e "\n\t\e[4mCHECKING YOUR SYSTEM:\e[0m"
 verifysys
 if [ $? -ne 0 ]; then
   exit 1;
+fi
+
+# Check that git is installed; if not, install it
+
+output=$(apt-cache policy git 2>&1)
+
+if [[ "$output" =~ "Installed: (none)" ]]; then
+
+  echo -e "\n\t\e[97mInstalling git\n\e[0m"
+  sudo apt-get install git -y
+
+fi
+
+# Check that pip3 is installed; if not, install it
+
+output=$(apt-cache policy python3-pip 2>&1)
+
+if [[ "$output" =~ "Installed: (none)" ]]; then
+
+  echo -e "\n\t\e[97mInstalling pip3\n\e[0m"
+  sudo apt-get install python3-pip -y
+
 fi
 
 #####################################
